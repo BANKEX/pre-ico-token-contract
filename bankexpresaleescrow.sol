@@ -160,17 +160,20 @@ contract TokenEscrow is usingOraclize {
 			TokenSupply tokenSupply = tokenSupplies[discountIndex];
 			
 			uint moneyForTokensPossibleToBuy = min((tokenSupply.limit - tokenSupply.totalSupply) * tokenSupply.priceInCentsPerToken,  amountOfCentsTransfered);
-			uint tokensPossibleToBuy = moneyForTokensPossibleToBuy / tokenSupply.priceInCentsPerToken;
+			uint tokensPossibleToBuy = min(moneyForTokensPossibleToBuy / tokenSupply.priceInCentsPerToken, balanceFor[owner] - tokenAmount);
 			
 			tokenSupply.totalSupply += tokensPossibleToBuy;
 			tokenAmount += tokensPossibleToBuy;
-			amountOfCentsToBePaid += tokensPossibleToBuy * tokenSupply.priceInCentsPerToken;
-			amountOfCentsTransfered -= amountOfCentsToBePaid;
+			
+			uint delta = tokensPossibleToBuy * tokenSupply.priceInCentsPerToken;
+			
+			amountOfCentsToBePaid += delta;
+			amountOfCentsTransfered -= delta;
 		}
 		
 		// Do not waste gas if there is no tokens to buy
 		if (tokenAmount == 0)
-		    throw;
+			throw;
 		
 		// Transfer tokens to buyer
 		transferFromOwner(msg.sender, tokenAmount);
