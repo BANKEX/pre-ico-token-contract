@@ -10,9 +10,7 @@
 // The buyer pays all the fees (including gas).
 //
 
-pragma solidity ^0.4.0;
-
-import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
+pragma solidity ^0.4.10;
 
 /**
  * @title Interface to communicate with ICO token contract
@@ -25,27 +23,31 @@ contract IToken {
 /**
  * @title Presale token contract
  */
-contract TokenEscrow is usingOraclize {
+contract TokenEscrow {
 	// Token-related properties/description to display in Wallet client / UI
 	string public standard = 'PBKXToken 0.3';
 	string public name = 'PBKXToken';
 	string public symbol = 'PBKX';
+	uint public decimals = 2;
 	
-	event Burn(address indexed from, uint256 value); // Event to inform about the fact of token burning/destroying
-	event newOraclizeQuery(string description); // Oraclize-related notifications
+	IToken icoToken;
+	
+	event Converted(address indexed from, uint256 value); // Event to inform about the fact of token burning/destroying
+	event Transfer(address indexed sender, uint256 value);
+	event Error(bytes32 error);
 	
 	mapping (address => uint) balanceFor; // Presale token balance for each of holders
 	address[] addressByIndex; // Array to keep track of keys/addresses which contain Presale tokens
 	
 	address owner;  // Contract owner
 	
-	uint public ETH_TO_USD_CENT_EXCHANGE_RATE; // Ether -> USD cents exchange rate
+	uint public exchangeRate; // preICO -> ICO token exchange rate
 
 	// Token supply and discount policy structure
 	struct TokenSupply {
 		uint limit;                 // Total amount of tokens
 		uint totalSupply;           // Current amount of sold tokens
-		uint priceInCentsPerToken;  // Price per token
+		uint tokenPriceInWei;  // Number of token per 1 Eth
 	}
 	
 	TokenSupply[3] public tokenSupplies;
@@ -61,6 +63,14 @@ contract TokenEscrow is usingOraclize {
 		owner = _owner;
 	}
 	
+	function setRate(uint _exchangeRate) owneronly {
+		exchangeRate = _exchangeRate;
+	}
+	
+	function setToken(address _icoToken) owneronly {
+		icoToken = IToken(_icoToken);
+	}
+	
 	/**
 	 * @dev Returns balance/token quanity owned by address
 	 * @param _address Account address to get balance for
@@ -71,48 +81,63 @@ contract TokenEscrow is usingOraclize {
 	}
 	
 	/**
-	 * @dev Converts/exchanges sold Presale tokens to ICO ones according to provided exchange rate
-	 * @param _icoToken ICO token contract address
-	 * @param exchangeRate Exchange rate of conversion. For example exchangeRate = 2 stands for converting N Presale tokens for N * 2 ICO tokens 
-	 */
-	function exchangeToIco(address _icoToken, uint exchangeRate) owneronly {
-		IToken icoToken = IToken(_icoToken);
-		for (uint ai = 0; ai < addressByIndex.length; ai++) {
-			address currentAddress = addressByIndex[ai];
-			icoToken.transferFromOwner(currentAddress, balanceFor[currentAddress] * exchangeRate);
-			balanceFor[currentAddress] = 0;
-		}
-	}
-	
-	/**
 	 * @dev Transfers tokens from caller/method invoker/message sender to specified recipient
 	 * @param _to Recipient address
 	 * @param _value Token quantity to transfer
 	 * @return success/failure of transfer
 	 */	
 	function transfer(address _to, uint _value) returns (bool success) {
-		if (balanceFor[msg.sender] < _value) throw;           // Check if the sender has enough
-		if (balanceFor[_to] + _value < balanceFor[_to]) throw; // Check for overflows
+		if (balanceFor[msg.sender] < _value) return false;           // Check if the sender has enough
+		if (balanceFor[_to] + _value < balanceFor[_to]) return false; // Check for overflows
+		if (msg.sender == owner) {
+			transferByOwner(_value);
+		}
 		balanceFor[msg.sender] -= _value;                     // Subtract from the sender
 		if (balanceFor[_to] == 0) {
 			addressByIndex.length++;
 			addressByIndex[addressByIndex.length-1] = _to;
 		}
 		balanceFor[_to] += _value;                            // Add the same to the recipient
+		Transfer(_to,_value);
 		return true;
+	}
+	
+	function transferByOwner(uint _value) private {
+		for (uint discountIndex = 0; discountIndex < tokenSupplies.length; discountIndex++) {
+			TokenSupply storage tokenSupply = tokenSupplies[discountIndex];
+			if(tokenSupply.totalSupply < tokenSupply.limit) {
+				if (tokenSupply.totalSupply + _value > tokenSupply.limit) {
+					tokenSupply.totalSupply = tokenSupply.limit;
+					_value -= tokenSupply.limit - tokenSupply.totalSupply;
+				} else {
+					tokenSupply.totalSupply += _value;
+				}
+			}
+		}
 	}
 	
 	/**
 	 * @dev Burns/destroys specified amount of Presale tokens for caller/method invoker/message sender
-	 * @param _value Token quantity to burn/destroy
 	 * @return success/failure of transfer
 	 */	
-	function burn(uint256 _value) returns (bool success) {
-		if (balanceFor[msg.sender] < _value) throw;            // Check if the sender has enough
-		balanceFor[msg.sender] -= _value;                      // Subtract from the sender
-		Burn(msg.sender, _value);
+	function convert() returns (bool success) {
+		if (balanceFor[msg.sender] == 0) return false;            // Check if the sender has enough
+		if (!exchangeToIco(msg.sender)) return false; // Try to exchange preICO tokens to ICO tokens
+		Converted(msg.sender, balanceFor[msg.sender]);
+		balanceFor[msg.sender] = 0;                      // Subtract from the sender
 		return true;
-	}  
+	} 
+	
+	/**
+	 * @dev Converts/exchanges sold Presale tokens to ICO ones according to provided exchange rate
+	 * @param owner address
+		 */
+	function exchangeToIco(address owner) private returns (bool) {
+	    if(icoToken != address(0)) {
+		    return icoToken.transferFromOwner(owner, balanceFor[owner] * exchangeRate);
+	    }
+	    return false;
+	}
 
 	/**
 	 * @dev Presale contract constructor
@@ -123,97 +148,62 @@ contract TokenEscrow is usingOraclize {
 		balanceFor[msg.sender] = 3000000; // Give the creator all initial tokens
 		
 		// Discount policy
-		tokenSupplies[0] = TokenSupply(1000000, 0, 28); // First million of tokens will go for price of 20 cents each
-		tokenSupplies[1] = TokenSupply(1000000, 0, 30); // Second million of tokens will go for price of 30 cents each
-		tokenSupplies[2] = TokenSupply(1000000, 0, 33); // Third million of tokens will go for price of 33 cents each
-		
-		// Enable oraclize_setProof is production
-		oraclize_setProof(proofType_TLSNotary | proofStorage_IPFS);
-		// Kickoff obtaining of ETH -> USD exchange rate
-		update(0);
-	}
-
-	/**
-	 * @dev Allows to transfer ether to contract's account for Oraclize consumption
-	 */
-	function payMoneyForOraclize() payable {
-		// Cause anonymous function below is used for token sale
+		tokenSupplies[0] = TokenSupply(1000000, 0, 11210762331838); // First million of tokens will go 11210762331838 wei for 1 token
+		tokenSupplies[1] = TokenSupply(1000000, 0, 12106537530266); // Second million of tokens will go 12106537530266 wei for 1 token
+		tokenSupplies[2] = TokenSupply(1000000, 0, 13245033112582); // Third million of tokens will go 13245033112582 wei for 1 token
 	}
   
 	// Incoming transfer from the Presale token buyer
 	function() payable {
-		// Do not allow payments until first exchange rate is get known
-		if (ETH_TO_USD_CENT_EXCHANGE_RATE == 0)
-			throw;
 		
-		uint tokenAmount = 0; // Amount of tokens which is possible to buy for incoming transfer/payment
-		uint amountOfCentsToBePaid = 0; // Total cost/price of tokens which is possible to buy for incoming transfer/payment
-		uint amountOfCentsTransfered = msg.value * ETH_TO_USD_CENT_EXCHANGE_RATE / 1 ether; // Cost/price in USD cents of incoming transfer/payment
+		uint tokenAmount; // Amount of tokens which is possible to buy for incoming transfer/payment
+		uint amountToBePaid; // Amount to be paid
+		uint amountTransfered = msg.value; // Cost/price in ETH of incoming transfer/payment
+		
+		if (amountTransfered <= 0) {
+		      Error('no eth was transfered');
+			  return;
+		}
 		
 		// Determine amount of tokens can be bought according to available supply and discount policy
 		for (uint discountIndex = 0; discountIndex < tokenSupplies.length; discountIndex++) {
 			// If it's not possible to buy any tokens at all skip the rest of discount policy
-			if (amountOfCentsTransfered <= 0) {
-			  break;
+			
+			TokenSupply storage tokenSupply = tokenSupplies[discountIndex];
+			
+			if(tokenSupply.totalSupply < tokenSupply.limit) {
+			
+				uint tokensPossibleToBuy = min(amountTransfered / tokenSupply.tokenPriceInWei, balanceFor[owner] - tokenAmount);
+
+				if (tokenSupply.totalSupply + tokensPossibleToBuy > tokenSupply.limit) {
+					tokensPossibleToBuy = tokenSupply.limit - tokenSupply.totalSupply;
+				}
+
+				tokenSupply.totalSupply += tokensPossibleToBuy;
+				tokenAmount += tokensPossibleToBuy;
+
+				uint delta = tokensPossibleToBuy * tokenSupply.tokenPriceInWei;
+
+				amountToBePaid += delta;
+			
 			}
-			
-			TokenSupply tokenSupply = tokenSupplies[discountIndex];
-			
-			uint moneyForTokensPossibleToBuy = min((tokenSupply.limit - tokenSupply.totalSupply) * tokenSupply.priceInCentsPerToken,  amountOfCentsTransfered);
-			uint tokensPossibleToBuy = min(moneyForTokensPossibleToBuy / tokenSupply.priceInCentsPerToken, balanceFor[owner] - tokenAmount);
-			
-			tokenSupply.totalSupply += tokensPossibleToBuy;
-			tokenAmount += tokensPossibleToBuy;
-			
-			uint delta = tokensPossibleToBuy * tokenSupply.priceInCentsPerToken;
-			
-			amountOfCentsToBePaid += delta;
-			amountOfCentsTransfered -= delta;
 		}
 		
 		// Do not waste gas if there is no tokens to buy
 		if (tokenAmount == 0)
-			throw;
+		    Error('no token to buy');
+			return;
 		
 		// Transfer tokens to buyer
 		transferFromOwner(msg.sender, tokenAmount);
-		
-		// Convert total cost/price of tokens which is possible to buy for incoming transfer/payment back to ether
-		uint amountOfEthToBePaid = amountOfCentsToBePaid * 1 ether / ETH_TO_USD_CENT_EXCHANGE_RATE;
-		
+
 		// Transfer money to seller
-		owner.transfer(amountOfEthToBePaid);
+		owner.transfer(amountToBePaid);
 		
 		// Refund buyer if overpaid / no tokens to sell
-		msg.sender.transfer(msg.value - amountOfEthToBePaid);
+		msg.sender.transfer(msg.value - amountToBePaid);
 	}
   
-	  /**
-	 * @dev Oraclize's callback for parsing/processing response which contains ETH -> USD exchange rate
-	 * @param myid Unique identifier of corresponding request
-	 * @param result Response payload excerpt
-	 * @param proof TLSNotary proof
-	 */	
-	function __callback(bytes32 myid, string result, bytes proof) {
-		if (msg.sender != oraclize_cbAddress()) throw;
-		
-		ETH_TO_USD_CENT_EXCHANGE_RATE = parseInt(result, 2); // save it in storage as $ cents
-		update(60 * 60); // Enable recursive price updates once in every hour
-	}
-
-	/**
-	 * @dev Send request of getting ETH -> USD exchange rate to Oraclize
-	 * @param delay Delay (in seconds) when the next request will happen
-	 */	
-	function update(uint delay) payable {
-		if (oraclize_getPrice("URL") > this.balance) {
-			newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
-		} else {
-			newOraclizeQuery("Oraclize query was sent, standing by for the answer..");
-			oraclize_query(delay, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
-		}
-	}
-
 	/**
 	 * @dev Removes/deletes contract
 	 */
@@ -228,8 +218,8 @@ contract TokenEscrow is usingOraclize {
 	 * @return success/failure of transfer
 	 */
 	function transferFromOwner(address _to, uint256 _value) private returns (bool success) {
-		if (balanceFor[owner] < _value) throw;                 // Check if the owner has enough
-		if (balanceFor[_to] + _value < balanceFor[_to]) throw;  // Check for overflows
+		if (balanceFor[owner] < _value) return false;                 // Check if the owner has enough
+		if (balanceFor[_to] + _value < balanceFor[_to]) return false;  // Check for overflows
 		balanceFor[owner] -= _value;                          // Subtract from the owner
 		if (balanceFor[_to] == 0) {
 			addressByIndex.length++;
