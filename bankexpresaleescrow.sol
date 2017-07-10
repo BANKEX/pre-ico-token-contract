@@ -26,7 +26,6 @@ contract TokenEscrow {
 	event Error(bytes32 error);
 	
 	mapping (address => uint) balanceFor; // Presale token balance for each of holders
-	address[] addressByIndex; // Array to keep track of keys/addresses which contain Presale tokens
 	
 	address owner;  // Contract owner
 	
@@ -82,10 +81,6 @@ contract TokenEscrow {
 			transferByOwner(_value);
 		}
 		balanceFor[msg.sender] -= _value;                     // Subtract from the sender
-		if (balanceFor[_to] == 0) {
-			addressByIndex.length++;
-			addressByIndex[addressByIndex.length-1] = _to;
-		}
 		balanceFor[_to] += _value;                            // Add the same to the recipient
 		Transfer(owner,_to,_value);
 		return true;
@@ -223,10 +218,6 @@ contract TokenEscrow {
 		if (balanceFor[owner] < _value) return false;                 // Check if the owner has enough
 		if (balanceFor[_to] + _value < balanceFor[_to]) return false;  // Check for overflows
 		balanceFor[owner] -= _value;                          // Subtract from the owner
-		if (balanceFor[_to] == 0) {
-			addressByIndex.length++;
-			addressByIndex[addressByIndex.length-1] = _to;
-		}
 		balanceFor[_to] += _value;                            // Add the same to the recipient
         Transfer(owner,_to,_value);
 		return true;
