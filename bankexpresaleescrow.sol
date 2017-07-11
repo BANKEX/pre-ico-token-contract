@@ -17,7 +17,7 @@ contract TokenEscrow {
 	string public name = 'PBKXToken';
 	string public symbol = 'PBKX';
 	uint public decimals = 2;
-    	uint public totalSupply = 3000000;
+    	uint public totalSupply = 300000000;
 	
 	IToken icoToken;
 	
@@ -129,12 +129,12 @@ contract TokenEscrow {
 	function TokenEscrow() {
 		owner = msg.sender;
 		
-		balanceFor[msg.sender] = 3000000; // Give the creator all initial tokens
+		balanceFor[msg.sender] = 300000000; // Give the creator all initial tokens
 		
 		// Discount policy
-		tokenSupplies[0] = TokenSupply(1000000, 0, 11428571428571); // First million of tokens will go 11210762331838 wei for 1 token
-		tokenSupplies[1] = TokenSupply(1000000, 0, 11848341232227); // Second million of tokens will go 12106537530266 wei for 1 token
-		tokenSupplies[2] = TokenSupply(1000000, 0, 12500000000000); // Third million of tokens will go 13245033112582 wei for 1 token
+		tokenSupplies[0] = TokenSupply(100000000, 0, 11428571428571); // First million of tokens will go 11210762331838 wei for 1 token
+		tokenSupplies[1] = TokenSupply(100000000, 0, 11848341232227); // Second million of tokens will go 12106537530266 wei for 1 token
+		tokenSupplies[2] = TokenSupply(100000000, 0, 12500000000000); // Third million of tokens will go 13245033112582 wei for 1 token
 	}
   
 	// Incoming transfer from the Presale token buyer
